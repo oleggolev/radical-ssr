@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Radical SSR</title>
+</head>
+<nav>
+    <a href="/notes">Notes</a>
+    <a href="/notes/new">New Note</a>
+</nav>
+
+<h1>Notes</h1>
+<ul>
+    {% for note in notes %}
+    <li>
+        <a href="/notes/{{note.id}}">{{note.title}}</a>
+    </li>
+    {% endfor %}
+</ul>
+
+</body>
+</html>
