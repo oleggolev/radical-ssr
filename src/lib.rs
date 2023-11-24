@@ -1,8 +1,10 @@
 use askama::Template;
 use chrono::Local;
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use worker::*;
 
+/// If this was an actual blog site:
 /// TODO: impose and enforce a character limit on title and content.
 /// TODO: add a secondary post details page and only show post preview
 ///       on the primary page.
@@ -77,28 +79,30 @@ async fn delete_post(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     }
 }
 
+/// To delete an existing post, send an empty body with post id as URL parameter.
+async fn clear_kv(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let kv = ctx.kv("SSR_BENCH")?;
+    let keys = kv.list().execute().await?.keys;
+    for key in keys {
+        kv.delete(&key.name).await?;
+    }
+    generate_api_response(200, "Successfully cleared KV".to_string())
+}
+
 /// Returns an HTML page with all posts.
 async fn get_posts(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let kv = ctx.kv("SSR_BENCH")?;
     let keys = kv.list().execute().await?.keys;
-    let mut posts = Vec::with_capacity(keys.len());
+    let mut futures = Vec::new();
     for key in keys {
-        if let Some(res) = kv.get(&key.name).json::<Post>().await? {
-            posts.push(res);
-        }
-        match kv.get(&key.name).json::<Post>().await {
-            Ok(post) => {
-                if let Some(post) = post {
-                    posts.push(post)
-                }
-            }
-            // If the value is not a Post, ignore it.
-            Err(err) => match err {
-                kv::KvError::Serialization(_) => continue,
-                _ => Err(err)?,
-            },
-        }
+        futures.push(kv.get(&key.name).json::<Post>());
     }
+    let posts = join_all(futures)
+        .await
+        .into_iter()
+        .filter_map(|post| post.ok())
+        .flatten()
+        .collect();
     let template = IndexTemplate { posts: &posts };
     generate_html_response(200, template)
 }
@@ -110,10 +114,11 @@ async fn get_about(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
 }
 
 #[event(fetch)]
-async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
+async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let router = Router::new();
     router
         .post_async("/post", create_post)
+        .post_async("/clear_kv", clear_kv)
         .delete_async("/post/:id", delete_post)
         .get_async("/", get_posts)
         .get_async("/posts", get_posts)
