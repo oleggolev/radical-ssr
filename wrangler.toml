@@ -2,5 +2,9 @@ name = "ssr-bench"
 main = "build/worker/shim.mjs"
 compatibility_date = "2023-03-22"
 
+kv_namespaces = [
+    { binding = "SSR_BENCH", id = "8ddd1de8bb1d496d9a46190354f15dae" }
+]
+
 [build]
 command = "cargo install -q worker-build && worker-build --release"
