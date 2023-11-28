@@ -20,21 +20,21 @@ else:
 
 # Useful functions.
 def clear_kv():
-    resp = requests.post(target + "/clear_kv")
+    resp = session.post(target + "/clear_kv")
     assert resp.status_code == 200
-    
+
 def populate_kv(N):
     fs_json = open('./benchmark/post.json')
     post = json.load(fs_json)
     for i in range(N):
         post["id"] = i
-        resp = requests.post(target + "/post", json=post)
+        resp = session.post(target + "/post", json=post)
         assert resp.status_code == 200
     fs_json.close()
 
 def time_get_posts():
     start = time.perf_counter()
-    requests.get(target + "/posts")
+    session.get(target + "/posts")
     end = time.perf_counter()
     return (end - start) * 1000
 
@@ -49,10 +49,16 @@ def measure_latencies():
 # Measure latency with a pre-determined set of N posts.
 fs_output = open('benchmark/' + args.outfile, 'w')
 num_trials = 10
-N_set = [0, 10, 20, 50, 100]
+N_set = [0, 5, 10, 15, 20, 50]
 for N in N_set:
     first_load_outputs = [0] * num_trials
     cached_load_outputs = [0] * num_trials
+    
+    # Cache connection.
+    session = requests.Session()
+    session.get(target + "/about")
+    
+    # Run the trials.
     for trial_num in range(num_trials):
         clear_kv()
         time.sleep(1)
