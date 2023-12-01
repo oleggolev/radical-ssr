@@ -37,6 +37,25 @@ struct GenericResponse {
     message: String,
 }
 
+type RWSet = Vec<String>;
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RWSetResponse {
+    status: u16,
+    rw_set: RWSet,
+}
+
+pub fn generate_rw_set_response(status: u16, rw_set: Option<RWSet>) -> Result<Response> {
+    if status == 200 {
+        Response::from_json(&RWSetResponse {
+            status,
+            rw_set: rw_set.unwrap(),
+        })
+    } else {
+        Response::error("cannot get r/w set", status)
+    }
+}
+
 pub fn generate_api_response(status: u16, message: String) -> Result<Response> {
     if status == 200 {
         Response::from_json(&GenericResponse { status, message })
@@ -113,6 +132,20 @@ async fn get_about(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     generate_html_response(200, template)
 }
 
+/// Returns the read/write set of this function.
+async fn get_rw_set(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let kv = ctx.kv("SSR_BENCH")?;
+    let keys: Vec<String> = kv
+        .list()
+        .execute()
+        .await?
+        .keys
+        .into_iter()
+        .map(|key| key.name)
+        .collect();
+    generate_rw_set_response(200, Some(keys))
+}
+
 #[event(fetch)]
 async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let router = Router::new();
@@ -123,6 +156,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/", get_posts)
         .get_async("/posts", get_posts)
         .get_async("/about", get_about)
+        .get_async("/rw_set", get_rw_set)
         .run(req, env)
         .await
 }

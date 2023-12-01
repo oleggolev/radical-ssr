@@ -65,6 +65,7 @@ for N in N_set:
         populate_kv(N)
         time.sleep(1)
         first_load, cached_load = measure_latencies()
+        print(f"{N}, {first_load}, {cached_load}")
         first_load_outputs[trial_num] = first_load
         cached_load_outputs[trial_num] = cached_load
         
