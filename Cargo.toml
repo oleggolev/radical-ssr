@@ -14,6 +14,7 @@ crate-type = ["cdylib"]
 askama = "0.12.1"
 chrono = "0.4.31"
 futures = "0.3.29"
+http = "1.0.0"
 serde = "1.0.193"
 serde_derive = "1.0.193"
 worker = "0.0.15"

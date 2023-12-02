@@ -1,6 +1,13 @@
+mod cache;
+mod types;
+
+use cache::CacheKV;
+use types::*;
+
 use askama::Template;
 use chrono::Local;
 use futures::future::join_all;
+use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use worker::*;
 
@@ -13,63 +20,81 @@ use worker::*;
 /// TODO: add an `updated_at`` field to the `Post` structure.
 /// TODO: enable Markdown to HTML conversion for title and content.
 
-#[derive(Deserialize, Serialize, Default, Debug)]
-pub struct Post {
-    pub id: u32,
-    pub title: String,
-    pub content: String,
-    pub created_at: Option<String>, // time string in edge-local time
-}
-
 #[derive(Template)]
 #[template(path = "index.html")]
-pub struct IndexTemplate<'a> {
+struct IndexTemplate<'a> {
     pub posts: &'a Vec<Post>,
 }
 
 #[derive(Template)]
 #[template(path = "about.html")]
-pub struct AboutTemplate {}
+struct AboutTemplate {}
 
-#[derive(Debug, Deserialize, Serialize)]
-struct GenericResponse {
+#[derive(Debug, Serialize)]
+struct GenericResponse<T>
+where
+    T: Serialize + for<'a> Deserialize<'a>,
+{
     status: u16,
-    message: String,
+    content: T,
 }
 
-type RWSet = Vec<String>;
-
-#[derive(Debug, Deserialize, Serialize)]
-struct RWSetResponse {
-    status: u16,
-    rw_set: RWSet,
+fn generate_api_success_response<T>(content: T) -> Result<Response>
+where
+    T: Serialize + for<'a> Deserialize<'a>,
+{
+    Response::from_json(&GenericResponse {
+        status: 200,
+        content,
+    })
 }
 
-pub fn generate_rw_set_response(status: u16, rw_set: Option<RWSet>) -> Result<Response> {
-    if status == 200 {
-        Response::from_json(&RWSetResponse {
-            status,
-            rw_set: rw_set.unwrap(),
-        })
-    } else {
-        Response::error("cannot get r/w set", status)
-    }
+fn generate_api_error_response(status: u16) -> Result<Response> {
+    Response::error(
+        StatusCode::from_u16(status)
+            .unwrap()
+            .canonical_reason()
+            .unwrap_or(""),
+        status,
+    )
 }
 
-pub fn generate_api_response(status: u16, message: String) -> Result<Response> {
-    if status == 200 {
-        Response::from_json(&GenericResponse { status, message })
-    } else {
-        Response::error(message, status)
-    }
-}
-
-pub fn generate_html_response<T>(status: u16, template: T) -> Result<Response>
+fn generate_html_response<T>(status: u16, template: T) -> Result<Response>
 where
     T: Template,
 {
     let body = template.render().unwrap();
     Ok(Response::from_html(body).unwrap().with_status(status))
+}
+
+/// Increment the counter for the number of posts that are contained in the KV.
+/// Since posts are only ever added sequentially by increasing ID number, if this
+/// value is some N, it means the keys that are in are accessed on HTML render are
+/// 0, 1, 2, ..., N - 1. This makes the r/w set function very simple.
+async fn increment_count(kv: &CacheKV) -> Result<()> {
+    let count = get_count(kv).await?;
+    kv.put("count", &(count + 1)).await
+}
+
+/// Decrement the counter for the number of posts that are contained in the KV.
+/// If the existing value is already zero, do nothing and return no error.
+async fn decrement_count(kv: &CacheKV) -> Result<()> {
+    let count = get_count(kv).await?;
+    let new_count: u32 = if count > 0 { count - 1 } else { 0 };
+    kv.put("count", &new_count).await
+}
+
+/// Gets the count of posts from the KV.
+async fn get_count(kv: &CacheKV) -> Result<u32> {
+    match kv.get("count").await? {
+        Some(mut count) => count.json::<u32>().await,
+        None => Ok(0),
+    }
+}
+
+/// Reset the count of posts in the KV to zero.
+async fn reset_count(kv: &CacheKV) -> Result<()> {
+    kv.put("count", &0).await
 }
 
 /// To add or edit an existing post, set request body to the following:
@@ -78,50 +103,57 @@ where
 ///     title: String(POST_TITLE_CHAR_LIMIT),
 ///     content: String(POST_CONTENT_CHAR_LIMIT)
 /// }
-async fn create_post(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let kv = ctx.kv("SSR_BENCH")?;
+async fn create_post(mut req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    let kv = &CacheKV::new();
     let mut post = req.json::<Post>().await?;
     let post_id = post.id.to_string();
     post.created_at = Some(Local::now().format("%H:%M:%S %m-%d-%Y").to_string());
-    kv.put(&post_id, post)?.execute().await?;
-    generate_api_response(200, format!("Successfully added post #{post_id}"))
+    kv.put(&post_id, &post).await?; // TODO: Currently does not check for duplicate posts (obvious bug)
+    increment_count(kv).await?;
+    generate_api_success_response(format!("Successfully added post #{post_id}"))
 }
 
 /// To delete an existing post, send an empty body with post id as URL parameter.
 async fn delete_post(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if let Some(id) = ctx.param("id") {
-        let kv = ctx.kv("SSR_BENCH")?;
+        let kv = &CacheKV::new();
         kv.delete(id).await?;
-        generate_api_response(200, format!("Successfully deleted post #{id}"))
+        decrement_count(kv).await?;
+        generate_api_success_response(format!("Successfully deleted post #{id}"))
     } else {
-        generate_api_response(400, "Bad Request".to_string())
+        generate_api_error_response(400)
     }
 }
 
 /// To delete an existing post, send an empty body with post id as URL parameter.
-async fn clear_kv(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let kv = ctx.kv("SSR_BENCH")?;
-    let keys = kv.list().execute().await?.keys;
-    for key in keys {
-        kv.delete(&key.name).await?;
+async fn clear_kv(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    let kv = &CacheKV::new();
+    let count = get_count(kv).await?;
+    for post_num in 0..count {
+        kv.delete(&post_num.to_string()).await?;
     }
-    generate_api_response(200, "Successfully cleared KV".to_string())
+    reset_count(kv).await?;
+    generate_api_success_response("Successfully cleared KV".to_string())
 }
 
 /// Returns an HTML page with all posts.
-async fn get_posts(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let kv = ctx.kv("SSR_BENCH")?;
-    let keys = kv.list().execute().await?.keys;
+async fn get_posts(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    let kv = &CacheKV::new();
+    let count = get_count(kv).await?;
     let mut futures = Vec::new();
-    for key in keys {
-        futures.push(kv.get(&key.name).json::<Post>());
+    for post_num in 0..count {
+        futures.push(async move {
+            let post_num_str = post_num.to_string();
+            kv.get(&post_num_str)
+                .await
+                .unwrap()
+                .unwrap()
+                .json::<Post>()
+                .await
+                .unwrap()
+        });
     }
-    let posts = join_all(futures)
-        .await
-        .into_iter()
-        .filter_map(|post| post.ok())
-        .flatten()
-        .collect();
+    let posts = join_all(futures).await;
     let template = IndexTemplate { posts: &posts };
     generate_html_response(200, template)
 }
@@ -133,17 +165,14 @@ async fn get_about(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
 }
 
 /// Returns the read/write set of this function.
-async fn get_rw_set(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let kv = ctx.kv("SSR_BENCH")?;
-    let keys: Vec<String> = kv
-        .list()
-        .execute()
-        .await?
-        .keys
-        .into_iter()
-        .map(|key| key.name)
-        .collect();
-    generate_rw_set_response(200, Some(keys))
+async fn get_rw_set(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    let kv = &CacheKV::new();
+    let count = get_count(kv).await?;
+    let mut keys = Vec::with_capacity(count.try_into().unwrap());
+    for post_num in 0..count {
+        keys.push(post_num);
+    }
+    generate_api_success_response(keys)
 }
 
 #[event(fetch)]
