@@ -143,8 +143,7 @@ async fn get_posts(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     let mut futures = Vec::new();
     for post_num in 0..count {
         futures.push(async move {
-            let post_num_str = post_num.to_string();
-            kv.get(&post_num_str)
+            kv.get(&post_num.to_string())
                 .await
                 .unwrap()
                 .unwrap()
@@ -170,7 +169,7 @@ async fn get_rw_set(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     let count = get_count(kv).await?;
     let mut keys = Vec::with_capacity(count.try_into().unwrap());
     for post_num in 0..count {
-        keys.push(post_num);
+        keys.push(post_num.to_string());
     }
     generate_api_success_response(keys)
 }
