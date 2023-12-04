@@ -103,19 +103,10 @@ async fn reset_count(kv: &CacheKV) -> Result<()> {
 async fn create_post(mut req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     let kv = &CacheKV::new().await;
     let mut post = req.json::<Post>().await?;
-    console_log!("Adding new post {:?}", post);
     let post_id = post.id.to_string();
     post.created_at = Some(Local::now().format("%H:%M:%S %m-%d-%Y").to_string());
     kv.put(&post_id, &post).await?; // TODO: Currently does not check for duplicate posts (obvious bug)
-    console_log!("Added");
     increment_count(kv).await?;
-
-    // Check that everything is there:
-    console_log!(
-        "Checking if everything is there:\n We have the post:{:?}\nAnd the count: {:?}\n",
-        kv.get::<Post>(&post_id).await.unwrap(),
-        kv.get::<u32>("count").await.unwrap(),
-    );
 
     generate_api_success_response(format!("Successfully added post #{post_id}"))
 }
@@ -148,14 +139,12 @@ async fn get_posts(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     let kv = &CacheKV::new().await;
     let count = get_count(kv).await?;
     let mut posts = Vec::with_capacity(count.try_into().unwrap());
-    console_log!("There are {} posts", count);
     for post_num in 0..count {
         let post_opt = kv.get::<Post>(&post_num.to_string()).await.unwrap();
         if let Some(post) = post_opt {
             posts.push(post);
         }
     }
-    console_log!("Retrieved {:?}", posts);
     let template = IndexTemplate { posts: &posts };
     generate_html_response(200, template)
 }
@@ -177,7 +166,7 @@ async fn get_rw_set(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     generate_api_success_response(keys)
 }
 
-/// Returns the read/write set of this function.
+/// Sets a dummy "value" into key "test" to verify that the cache works properly.
 async fn test_kv(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     let kv = &CacheKV::new().await;
     kv.put("test", &"value".to_string()).await?;
