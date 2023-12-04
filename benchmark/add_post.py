@@ -9,7 +9,9 @@ post["id"] = 0
 
 # session = requests.Session()
 # session.get(target + "/about")
-resp = requests.post(target + "/post", json=post)
-print(resp)
+# resp = requests.post(target + "/post", json=post)
+# resp = requests.post(target + "/clear_kv")
+resp = requests.post(target + "/test_kv")
+print(resp.content)
 assert resp.status_code == 200
 fs_json.close()

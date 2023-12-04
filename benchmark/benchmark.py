@@ -34,8 +34,9 @@ def populate_kv(N):
 
 def time_get_posts():
     start = time.perf_counter()
-    session.get(target + "/posts")
+    res = session.get(target + "/posts")
     end = time.perf_counter()
+    print(res.content)
     return (end - start) * 1000
 
 def measure_latencies():
@@ -53,7 +54,6 @@ session.get(target + "/about")
 
 # Measure latency with a pre-determined set of N posts.
 N_set = [0, 5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-N_set = [10]
 for N in N_set:
     num_trials = 10
     first_load_outputs = [0] * num_trials

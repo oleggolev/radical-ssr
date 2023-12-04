@@ -72,7 +72,8 @@ where
 /// 0, 1, 2, ..., N - 1. This makes the r/w set function very simple.
 async fn increment_count(kv: &CacheKV) -> Result<()> {
     let count = get_count(kv).await?;
-    kv.put("count", &(count + 1)).await
+    let new_count: u32 = count + 1;
+    kv.put("count", &new_count).await
 }
 
 /// Decrement the counter for the number of posts that are contained in the KV.
@@ -85,10 +86,7 @@ async fn decrement_count(kv: &CacheKV) -> Result<()> {
 
 /// Gets the count of posts from the KV.
 async fn get_count(kv: &CacheKV) -> Result<u32> {
-    match kv.get("count").await? {
-        Some(mut count) => count.json::<u32>().await,
-        None => Ok(0),
-    }
+    Ok(kv.get::<u32>("count").await?.unwrap_or(0))
 }
 
 /// Reset the count of posts in the KV to zero.
@@ -103,19 +101,29 @@ async fn reset_count(kv: &CacheKV) -> Result<()> {
 ///     content: String(POST_CONTENT_CHAR_LIMIT)
 /// }
 async fn create_post(mut req: Request, _ctx: RouteContext<()>) -> Result<Response> {
-    let kv = &CacheKV::new();
+    let kv = &CacheKV::new().await;
     let mut post = req.json::<Post>().await?;
+    console_log!("Adding new post {:?}", post);
     let post_id = post.id.to_string();
     post.created_at = Some(Local::now().format("%H:%M:%S %m-%d-%Y").to_string());
     kv.put(&post_id, &post).await?; // TODO: Currently does not check for duplicate posts (obvious bug)
+    console_log!("Added");
     increment_count(kv).await?;
+
+    // Check that everything is there:
+    console_log!(
+        "Checking if everything is there:\n We have the post:{:?}\nAnd the count: {:?}\n",
+        kv.get::<Post>(&post_id).await.unwrap(),
+        kv.get::<u32>("count").await.unwrap(),
+    );
+
     generate_api_success_response(format!("Successfully added post #{post_id}"))
 }
 
 /// To delete an existing post, send an empty body with post id as URL parameter.
 async fn delete_post(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if let Some(id) = ctx.param("id") {
-        let kv = &CacheKV::new();
+        let kv = &CacheKV::new().await;
         kv.delete(id).await?;
         decrement_count(kv).await?;
         generate_api_success_response(format!("Successfully deleted post #{id}"))
@@ -126,7 +134,7 @@ async fn delete_post(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
 /// To delete an existing post, send an empty body with post id as URL parameter.
 async fn clear_kv(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
-    let kv = &CacheKV::new();
+    let kv = &CacheKV::new().await;
     let count = get_count(kv).await?;
     for post_num in 0..count {
         kv.delete(&post_num.to_string()).await?;
@@ -137,14 +145,14 @@ async fn clear_kv(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
 
 /// Returns an HTML page with all posts.
 async fn get_posts(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
-    let kv = &CacheKV::new();
+    let kv = &CacheKV::new().await;
     let count = get_count(kv).await?;
     let mut posts = Vec::with_capacity(count.try_into().unwrap());
     console_log!("There are {} posts", count);
     for post_num in 0..count {
-        let post_opt = kv.get(&post_num.to_string()).await.unwrap();
-        if let Some(mut post) = post_opt {
-            posts.push(post.json::<Post>().await?);
+        let post_opt = kv.get::<Post>(&post_num.to_string()).await.unwrap();
+        if let Some(post) = post_opt {
+            posts.push(post);
         }
     }
     console_log!("Retrieved {:?}", posts);
@@ -160,13 +168,21 @@ async fn get_about(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
 
 /// Returns the read/write set of this function.
 async fn get_rw_set(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
-    let kv = &CacheKV::new();
+    let kv = &CacheKV::new().await;
     let count = get_count(kv).await?;
     let mut keys = Vec::with_capacity(count.try_into().unwrap());
     for post_num in 0..count {
         keys.push(post_num.to_string());
     }
     generate_api_success_response(keys)
+}
+
+/// Returns the read/write set of this function.
+async fn test_kv(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    let kv = &CacheKV::new().await;
+    kv.put("test", &"value".to_string()).await?;
+    let val = kv.get::<String>("test").await?;
+    generate_api_success_response(val)
 }
 
 #[event(fetch)]
@@ -180,6 +196,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/posts", get_posts)
         .get_async("/about", get_about)
         .get_async("/rw_set", get_rw_set)
+        .post_async("/test_kv", test_kv)
         .run(req, env)
         .await
 }
