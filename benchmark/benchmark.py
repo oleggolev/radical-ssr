@@ -48,11 +48,12 @@ session = requests.Session()
 session.get(target + "/about")
 
 # Prepare the output CSV file for writing results.
-fs_output = open('benchmark/' + args.outfile, 'w')
-fs_output.write(f"num posts, initial_load_latency, cached_load_latency\n")
+# fs_output = open('benchmark/' + args.outfile, 'w')
+# fs_output.write(f"num posts, initial_load_latency, cached_load_latency\n")
 
 # Measure latency with a pre-determined set of N posts.
 N_set = [0, 5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+N_set = [10]
 for N in N_set:
     num_trials = 10
     first_load_outputs = [0] * num_trials
@@ -70,7 +71,7 @@ for N in N_set:
         cached_load_outputs[trial_num] = cached_load
         
     # Write the average load times for this N.
-    fs_output.write(f"{N}, {sum(first_load_outputs) / len(first_load_outputs)}, {sum(cached_load_outputs) / len(cached_load_outputs)}\n")
+    # fs_output.write(f"{N}, {sum(first_load_outputs) / len(first_load_outputs)}, {sum(cached_load_outputs) / len(cached_load_outputs)}\n")
 
 # Done.
-fs_output.close()   
+# fs_output.close()   

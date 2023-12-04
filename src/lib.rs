@@ -6,7 +6,6 @@ use types::*;
 
 use askama::Template;
 use chrono::Local;
-use futures::future::join_all;
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use worker::*;
@@ -140,19 +139,15 @@ async fn clear_kv(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
 async fn get_posts(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     let kv = &CacheKV::new();
     let count = get_count(kv).await?;
-    let mut futures = Vec::new();
+    let mut posts = Vec::with_capacity(count.try_into().unwrap());
+    console_log!("There are {} posts", count);
     for post_num in 0..count {
-        futures.push(async move {
-            kv.get(&post_num.to_string())
-                .await
-                .unwrap()
-                .unwrap()
-                .json::<Post>()
-                .await
-                .unwrap()
-        });
+        let post_opt = kv.get(&post_num.to_string()).await.unwrap();
+        if let Some(mut post) = post_opt {
+            posts.push(post.json::<Post>().await?);
+        }
     }
-    let posts = join_all(futures).await;
+    console_log!("Retrieved {:?}", posts);
     let template = IndexTemplate { posts: &posts };
     generate_html_response(200, template)
 }
