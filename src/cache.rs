@@ -42,8 +42,7 @@ impl CacheKV {
         let cache_resp = Response::from_json::<T>(val)?.with_headers(cache_headers);
         self.cache
             .put(format!("{DEFAULT_KEY_URL}/{key}"), cache_resp)
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn delete(&self, key: &str) -> Result<()> {
